@@ -79,8 +79,8 @@ spritesheet.webp
 Spritesheet format:
 
 ```text
-1536x1872
-8 columns x 9 rows
+v1: 1536x1872 (8 columns x 9 rows)
+v2: 1536x2288 (8 columns x 11 rows)
 192x208 per frame
 transparent background
 ```
@@ -127,3 +127,42 @@ build_windows_exe_debug.bat
 ```
 
 The release includes `app_icon.ico`, and the build scripts use it automatically.
+
+## Codex pet v2 support
+
+Both PNG and WebP atlases are supported. If `spriteVersionNumber` is present,
+it must be the integer 1 or 2 and match the image dimensions. For older manifests
+without the field, the version is inferred from the exact atlas size. Invalid
+imports are rejected before replacing an installed pet.
+
+The nine existing animation sequences and timings are unchanged. V2 adds sixteen
+single-frame poses from rows 9 and 10, read left to right. Frame 0 looks up,
+4 right, 8 down, and 12 left; intermediate frames advance clockwise by 22.5 degrees.
+In full and mini mode, an idle pet looks toward the global mouse position inside
+an interaction radius (360 logical pixels at scale 1; at least 240). The center
+deadzone returns to idle. A 3-degree boundary margin reduces direction flicker.
+The pointer is sampled every 40 ms without changing the existing 120 ms care and
+Codex activity timer. Qt logical coordinates keep pointer and pet aligned at
+Windows display scaling. Dragging, care animations, active Codex states, menus,
+and dialogs take priority. Moving outside the radius resumes normal animation.
+
+Reference: [Codex Pet Web SDK atlas layout](https://github.com/wildcard/codex-pet-companion/blob/main/src/atlas.ts).
+The inspected SDK provides an ordered `look-around` sequence, but does not expose
+a pointer-to-angle implementation; pointer selection here is an independent Qt
+implementation. This is not a claim of identical official Codex timing or behavior.
+
+This fork checks releases from `PersephoneUsher/codex-pet-companion`, preventing
+an upstream v1-only release from replacing the v2 build.
+
+### Tests
+
+```powershell
+python -m unittest discover -s tests -v
+# Optional private pet integration test (assets are not committed):
+$env:PET_TEST_FOLDER = 'C:\path\to\your\pet'
+python -m unittest discover -s tests -v
+```
+
+Tests cover strict version/geometry validation, legacy inference, import and
+discovery, preservation of existing pets on invalid imports, all sixteen angles,
+sector boundaries, all original animation rows, and activity/drag precedence.
