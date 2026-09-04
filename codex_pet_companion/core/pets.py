@@ -4,10 +4,9 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-from PIL import Image
-
 from .config import ROOT, data_dir
-from .constants import ATLAS_SIZE, TRAITS
+from .constants import TRAITS
+from .atlas import inspect_spritesheet
 
 @dataclass
 class PetInfo:
@@ -18,15 +17,16 @@ class PetInfo:
     source: str
     folder: Path | None = None
     background_path: Path | None = None
+    sprite_version: int = 1
 
     @property
     def label(self) -> str:
         return f"{self.display_name} ({self.id})"
 
-def valid_spritesheet(path: Path) -> bool:
+def valid_spritesheet(path: Path, declared: object = None) -> bool:
     try:
-        with Image.open(path) as img:
-            return img.size == ATLAS_SIZE and img.format in {"WEBP", "PNG"}
+        inspect_spritesheet(path, declared)
+        return True
     except Exception:
         return False
 
@@ -38,11 +38,19 @@ def load_pet_from_folder(folder: Path, source: str) -> PetInfo | None:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     except Exception:
         return None
+    if not isinstance(manifest, dict):
+        return None
     pet_id = str(manifest.get("id") or folder.name).strip() or folder.name
     display = str(manifest.get("displayName") or pet_id).strip() or pet_id
     desc = str(manifest.get("description") or "").strip()
     sheet = folder / str(manifest.get("spritesheetPath") or "spritesheet.webp")
-    if not valid_spritesheet(sheet):
+    try:
+        if not sheet.resolve().is_relative_to(folder.resolve()):
+            return None
+        if "spriteVersionNumber" in manifest and manifest["spriteVersionNumber"] is None:
+            return None
+        version = inspect_spritesheet(sheet, manifest.get("spriteVersionNumber"))
+    except (OSError, ValueError):
         return None
     background_raw = str(manifest.get("backgroundPath") or "").strip()
     background = folder / background_raw if background_raw else folder / f"{pet_id}_background.jpg"
@@ -54,6 +62,7 @@ def load_pet_from_folder(folder: Path, source: str) -> PetInfo | None:
         source,
         folder,
         background if background.is_file() else None,
+        version,
     )
 
 
@@ -73,19 +82,9 @@ def discover_pets(_codex_home: Path | None = None) -> list[PetInfo]:
     pets_root = data_dir() / "pets"
     if pets_root.is_dir():
         for folder in sorted(p for p in pets_root.iterdir() if p.is_dir()):
-            manifest_path = folder / "pet.json"
-            if not manifest_path.is_file():
-                continue
-            try:
-                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-            except Exception:
-                continue
-            pet_id = str(manifest.get("id") or folder.name).strip() or folder.name
-            display = str(manifest.get("displayName") or pet_id).strip() or pet_id
-            desc = str(manifest.get("description") or "").strip()
-            sheet = folder / str(manifest.get("spritesheetPath") or "spritesheet.webp")
-            if valid_spritesheet(sheet):
-                pets.append(PetInfo(pet_id, display, desc, sheet, str(folder), folder))
+            pet = load_pet_from_folder(folder, str(folder))
+            if pet is not None:
+                pets.append(pet)
     return pets
 
 def load_companion_data(pet: PetInfo | None) -> dict:
