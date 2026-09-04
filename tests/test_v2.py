@@ -10,7 +10,9 @@ from unittest.mock import patch
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PIL import Image
-from PySide6.QtCore import QPoint, Qt
+from PySide6.QtCore import QPoint, QPointF, Qt, QEvent
+from PySide6.QtGui import QMouseEvent
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QLabel
 
 from codex_pet_companion.core.atlas import atlas_version, look_direction
@@ -172,6 +174,8 @@ class V2Tests(unittest.TestCase):
                 c.refresh_pointer()
                 self.assertIn("Active:", c.codex_source_label())
                 self.assertEqual(len(c.full_frames.look_frames), 16)
+                QTest.mouseClick(c.full.pet, Qt.MouseButton.LeftButton)
+                self.assertEqual(c.state["current_event"], "waving")
                 c.begin_compact_drag()
                 c.update_compact_drag_direction(-5)
                 self.assertEqual(c.anim_name, "running-left")
@@ -181,6 +185,28 @@ class V2Tests(unittest.TestCase):
                 c.pointer_timer.stop()
                 c.full.hide()
                 c.compact.hide()
+
+    def test_mini_window_mouse_events(self):
+        from unittest.mock import Mock
+        from codex_pet_companion.ui_qt.app import MiniSpriteWindow
+        controller = Mock()
+        widget = MiniSpriteWindow(controller)
+        self.addCleanup(widget.close)
+        widget.move(100, 100)
+        press = QMouseEvent(QEvent.Type.MouseButtonPress, QPointF(10, 10), QPointF(110, 110),
+                            Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier)
+        widget.mousePressEvent(press)
+        controller.begin_compact_drag.assert_called_once()
+        move = QMouseEvent(QEvent.Type.MouseMove, QPointF(10, 10), QPointF(170, 140),
+                           Qt.MouseButton.NoButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier)
+        widget.mouseMoveEvent(move)
+        self.assertEqual(widget.pos(), QPoint(160, 130))
+        controller.update_compact_drag_direction.assert_called_once_with(60)
+        widget.mouseReleaseEvent(press)
+        self.assertIsNone(widget.drag_pos)
+        controller.end_compact_drag.assert_called_once()
+        widget.mouseDoubleClickEvent(press)
+        controller.show_full.assert_called_once()
 
     @unittest.skipUnless(os.environ.get("PET_TEST_FOLDER"), "Set PET_TEST_FOLDER for a private real-pet integration test")
     def test_real_pet_import_and_frames(self):
