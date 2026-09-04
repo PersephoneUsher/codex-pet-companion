@@ -6,6 +6,7 @@ from PIL import Image
 from PySide6.QtGui import QImage, QPixmap
 
 from codex_pet_companion.core.constants import CELL_H, CELL_W, STATES
+from codex_pet_companion.core.atlas import atlas_version
 
 def pil_to_pixmap(image: Image.Image) -> QPixmap:
     rgba = image.convert("RGBA")
@@ -15,14 +16,17 @@ def pil_to_pixmap(image: Image.Image) -> QPixmap:
     return QPixmap.fromImage(qimg.copy())
 
 class SpriteFrames:
-    def __init__(self, path: Path, scale: float = 2.0):
+    def __init__(self, path: Path, scale: float = 2.0, version: int | None = None):
         self.path = path
         self.scale = max(0.25, min(4.0, float(scale)))
         self.frames: dict[str, list[QPixmap]] = {}
+        self.version = version
+        self.look_frames: list[QPixmap] = []
         self.load()
 
     def load(self) -> None:
         with Image.open(self.path) as opened:
+            self.version = atlas_version(opened.size, self.version)
             atlas = opened.convert("RGBA")
         self.frames = {}
         for name, (row, durations) in STATES.items():
@@ -33,6 +37,19 @@ class SpriteFrames:
                     crop = crop.resize((max(1, round(CELL_W * self.scale)), max(1, round(CELL_H * self.scale))), Image.Resampling.NEAREST)
                 row_frames.append(pil_to_pixmap(crop))
             self.frames[name] = row_frames
+        self.look_frames = []
+        if self.version == 2:
+            for index in range(16):
+                row, col = 9 + index // 8, index % 8
+                crop = atlas.crop((col * CELL_W, row * CELL_H, (col + 1) * CELL_W, (row + 1) * CELL_H))
+                if self.scale != 1:
+                    crop = crop.resize((max(1, round(CELL_W * self.scale)), max(1, round(CELL_H * self.scale))), Image.Resampling.NEAREST)
+                self.look_frames.append(pil_to_pixmap(crop))
+
+    def get_look(self, direction: int) -> QPixmap:
+        if not self.look_frames:
+            return self.get("idle", 0)
+        return self.look_frames[direction % 16]
 
     def get(self, state: str, index: int) -> QPixmap:
         frames = self.frames.get(state) or self.frames["idle"]
