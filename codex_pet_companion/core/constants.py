@@ -2,10 +2,11 @@ from __future__ import annotations
 
 APP_VERSION = "1.0.6"
 APP_NAME_DISPLAY = "Codex Pet Companion"
-GITHUB_REPO = "pixel-raccoon/codex-pet-companion"
+GITHUB_REPO = "PersephoneUsher/codex-pet-companion"
 CELL_W = 192
 CELL_H = 208
 ATLAS_SIZE = (1536, 1872)
+ATLAS_SIZES = {1: ATLAS_SIZE, 2: (1536, 2288)}
 
 STATES = {
     # Calmer timings: the official pet reads as a slow blink/idle companion, not a twitchy game sprite.
