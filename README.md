@@ -28,6 +28,8 @@ The app includes an updater, so future versions can be installed from inside the
 
 ## Features
 
+- Windows activity tracking follows appended bytes across all session logs, including logs whose modification timestamp remains unchanged while Codex is running. Partial records are retained until complete, and concurrent sessions keep separate task titles and event debounce state.
+
 - Full desktop window and compact mini mode.
 - Mini mode with short workflow notifications, similar to the official Codex pets.
 - Reactions to Codex tasks, tool calls, reviews, errors, and quiet periods.

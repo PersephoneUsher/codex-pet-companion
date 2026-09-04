@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-APP_VERSION = "1.0.6"
+APP_VERSION = "1.0.7"
 APP_NAME_DISPLAY = "Codex Pet Companion"
 GITHUB_REPO = "PersephoneUsher/codex-pet-companion"
 CELL_W = 192

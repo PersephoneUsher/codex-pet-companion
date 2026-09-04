@@ -33,7 +33,7 @@ class CodexBridge(threading.Thread):
         self.event_queue = event_queue
         self.stop_event = threading.Event()
         self.offsets: dict[str, int] = {}
-        self.last_events: dict[str, float] = {}
+        self.last_events: dict[tuple[str, str], float] = {}
         self.active_session_file = ""
         self.started_at = time.time()
         self.last_activity_at = 0.0
@@ -43,6 +43,10 @@ class CodexBridge(threading.Thread):
         self._last_source_snapshot: tuple[str, str, int, str] | None = None
         self._last_candidate_scan_at = 0.0
         self.seen_session_files: set[str] = set()
+        self.pending_sources: list[SessionSource] = []
+        self.byte_activity: dict[str, float] = {}
+        self.session_titles: dict[str, str] = {}
+        self.observed_sizes: dict[str, int] = {}
 
     @classmethod
     def task_title_from_user_message(cls, value: Any, limit: int = 40) -> str:
@@ -82,14 +86,24 @@ class CodexBridge(threading.Thread):
         poll = max(0.5, float(self.config.get("pollSeconds", 1) or 1))
         while not self.stop_event.is_set():
             try:
-                self.refresh_codex_homes()
-                latest = self.find_latest_session()
-                if latest is not None:
-                    self.process_file(latest)
-                self.maybe_emit_inactive()
+                self.poll_once()
             except Exception as exc:
                 self.debug(f"bridge loop exception: {type(exc).__name__}: {exc}")
             self.stop_event.wait(poll)
+
+    def poll_once(self) -> None:
+        self.refresh_codex_homes()
+        self.find_latest_session()
+        # Windows can keep LastWriteTime unchanged while Codex holds its log open.
+        # Follow unread bytes in every session, not only the newest timestamp.
+        for source in self.pending_sources:
+            self.active_codex_home = source.codex_home
+            self.active_session_file = str(source.session_file)
+            try:
+                self.process_file(source.session_file)
+            except OSError as exc:
+                self.debug(f"session unavailable: {type(exc).__name__}: {exc}")
+        self.maybe_emit_inactive()
 
     def debug(self, message: str) -> None:
         if bool(self.config.get("debugBridge", False)):
@@ -135,7 +149,25 @@ class CodexBridge(threading.Thread):
                     continue
                 sources.append(SessionSource(codex_home, path, stat.st_mtime, stat.st_size))
 
-        latest_source = max(sources, key=lambda source: source.mtime) if sources else None
+        self.pending_sources = []
+        current = time.time()
+        for source in sources:
+            key = str(source.session_file.resolve())
+            try:
+                self.initialize_offset(source.session_file)
+            except OSError:
+                continue
+            previous_size = self.observed_sizes.get(key, self.offsets[key])
+            self.observed_sizes[key] = source.size
+            if source.size != self.offsets[key]:
+                self.pending_sources.append(source)
+                if source.size != previous_size:
+                    self.byte_activity[key] = current
+        self.pending_sources.sort(key=lambda source: source.mtime)
+        active = next((s for s in sources if str(s.session_file) == self.active_session_file), None)
+        latest_source = (self.pending_sources[-1] if self.pending_sources else active)
+        if latest_source is None and sources:
+            latest_source = max(sources, key=lambda source: source.mtime)
         nearby_count = self.nearby_session_count(sources)
 
         if latest_source is not None:
@@ -175,7 +207,8 @@ class CodexBridge(threading.Thread):
             return 0
         window = max(1.0, float(self.config.get("bridgeNearbySessionSeconds", 180) or 180))
         cutoff = time.time() - window
-        return sum(1 for source in sources if source.mtime >= cutoff)
+        return sum(1 for source in sources
+                   if max(source.mtime, self.byte_activity.get(str(source.session_file.resolve()), 0)) >= cutoff)
 
     def source_snapshot(self, nearby_count: int) -> dict[str, Any]:
         label, kind = self.source_label(self.active_codex_home)
@@ -245,8 +278,10 @@ class CodexBridge(threading.Thread):
                 labels.append(label)
         return labels
 
-    def read_new_lines(self, path: Path) -> list[str]:
+    def initialize_offset(self, path: Path) -> None:
         key = str(path.resolve())
+        if key in self.offsets:
+            return
         stat = path.stat()
         size = stat.st_size
 
@@ -265,6 +300,13 @@ class CodexBridge(threading.Thread):
                 self.offsets[key] = 0
                 self.debug(f"new session from start: offset=0 size={size} ctime={stat.st_ctime:.3f} mtime={stat.st_mtime:.3f}")
 
+        self.offsets.setdefault(key, 0)
+
+    def read_new_lines(self, path: Path) -> list[str]:
+        key = str(path.resolve())
+        self.initialize_offset(path)
+        size = path.stat().st_size
+
         offset = int(self.offsets.get(key, 0) or 0)
         if offset > size:
             offset = 0
@@ -274,7 +316,11 @@ class CodexBridge(threading.Thread):
         with path.open("rb") as f:
             f.seek(offset)
             data = f.read()
-            self.offsets[key] = f.tell()
+            # Leave an incomplete record unread, including a split UTF-8 character.
+            # Codex may append a JSONL record over more than one write.
+            complete = data.rfind(b"\n") + 1
+            self.offsets[key] = offset + complete
+            data = data[:complete]
 
         lines = [line for line in data.decode("utf-8", errors="ignore").splitlines() if line.strip()]
         if data or bool(self.config.get("debugBridgeVerbose", False)):
@@ -299,13 +345,14 @@ class CodexBridge(threading.Thread):
             debounce = {}
         delay = float(debounce.get(action, 3) or 3)
         current = time.time()
-        last = float(self.last_events.get(action, 0) or 0)
+        event_key = (session_file, action)
+        last = float(self.last_events.get(event_key, 0) or 0)
         if current - last < delay:
             self.debug(f"debounced event: {action} type={kind or action}")
             return
 
         title, subtitle = self.notification_text(action, note, kind)
-        self.last_events[action] = current
+        self.last_events[event_key] = current
         self.last_activity_at = current
         self.inactive_sent = False
         self.debug(f"queue event: {action} type={kind or action} title={title} subtitle={subtitle}")
@@ -359,11 +406,10 @@ class CodexBridge(threading.Thread):
             })
 
     def process_file(self, path: Path) -> None:
-        max_age = float(self.config.get("bridgeMaxEventAgeSeconds", 900) or 900)
-        if path.stat().st_mtime < self.started_at - max_age:
-            self.debug(f"skip stale session: {path}")
-            return
+        # Freshness is determined by each event's timestamp below. File mtime
+        # may be hours behind even when new task events are being appended.
         self.active_session_file = str(path)
+        self.current_task_title = self.session_titles.get(str(path), "")
         if not self.current_task_title:
             title = self.session_index_title(path)
             if title:
@@ -385,6 +431,7 @@ class CodexBridge(threading.Thread):
                 action, note, kind = event
                 self.debug(f"recognized payload.type={kind} action={action} note={self.short_title(note)}")
                 self.emit(action, note, str(path), kind)
+        self.session_titles[str(path)] = self.current_task_title
 
     def event_from_json(self, obj: dict[str, Any]) -> tuple[str, str, str] | None:
         payload = self.extract_payload(obj)
