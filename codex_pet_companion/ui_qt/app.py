@@ -38,6 +38,7 @@ from codex_pet_companion.core.virtual_pet import (
 from codex_pet_companion.core.text_profiles import text_profile_id
 from codex_pet_companion.core.update_checker import UpdateInfo, check_for_update, download_update
 from .sprites import SpriteFrames
+from codex_pet_companion.core.atlas import look_direction
 from .widgets import StatRow
 
 MINI_BUBBLE_THEME = "light"
@@ -1216,8 +1217,9 @@ class CompanionController:
         ensure_bond_state(self.state, self.current_pet.id)
         self.trait_key = pet_trait_key(self.current_pet)
         self.ensure_activity_state()
-        self.full_frames = SpriteFrames(self.current_pet.spritesheet_path, float(self.config.get("fullScale", 1.0)))
-        self.compact_frames = SpriteFrames(self.current_pet.spritesheet_path, compact_scale_value(self.config.get("compactScale", 0.50)))
+        self.full_frames = SpriteFrames(self.current_pet.spritesheet_path, float(self.config.get("fullScale", 1.0)), self.current_pet.sprite_version)
+        self.compact_frames = SpriteFrames(self.current_pet.spritesheet_path, compact_scale_value(self.config.get("compactScale", 0.50)), self.current_pet.sprite_version)
+        self.look_indices = {}
         self.frame_index = 0
         self.anim_name = "idle"
         self.next_frame_at = 0.0
@@ -1249,6 +1251,9 @@ class CompanionController:
         self.timer = QTimer()
         self.timer.timeout.connect(self.tick)
         self.timer.start(120)
+        self.pointer_timer = QTimer()
+        self.pointer_timer.timeout.connect(self.refresh_pointer)
+        self.pointer_timer.start(40)
         QTimer.singleShot(1200, self.maybe_check_updates_on_startup)
 
     def start(self):
@@ -1352,6 +1357,8 @@ class CompanionController:
         self._really_quitting = True
         if hasattr(self, "timer"):
             self.timer.stop()
+        if hasattr(self, "pointer_timer"):
+            self.pointer_timer.stop()
         self.bridge.stop()
         if self.bridge.is_alive():
             self.bridge.join(timeout=1.0)
@@ -1690,8 +1697,39 @@ class CompanionController:
     def should_show_compact_bubble(self) -> bool:
         return now() < float(self.state.get("codex_notification_until", 0.0) or 0.0)
 
+    def pointer_pixmap(self, frames, widget, key):
+        previous = self.look_indices.get(key)
+        direction = None
+        # An overlay only: do not change the underlying animation or its clock.
+        if (frames.look_frames and widget.isVisible() and self.anim_name == "idle"
+                and self.current_animation() == "idle" and not self.compact_dragging
+                and not (QApplication.mouseButtons() & Qt.MouseButton.LeftButton)
+                and QApplication.activePopupWidget() is None
+                and QApplication.activeModalWidget() is None
+                and not (self.state.get("codex_status") in {"running", "review", "error", "waiting"}
+                         and float(self.state.get("codex_status_until", 0) or 0) > now())):
+            center = widget.mapToGlobal(widget.rect().center())
+            delta = QCursor.pos() - center
+            direction = look_direction(delta.x(), delta.y(), previous,
+                                       deadzone=max(8, 12 * frames.scale),
+                                       radius=max(240, 360 * frames.scale))
+        self.look_indices[key] = direction
+        return frames.get_look(direction) if direction is not None else frames.get(self.anim_name, self.frame_index)
+
+    def refresh_pointer(self):
+        # Fast pointer polling updates only sprites, leaving bridge/care cadence intact.
+        for key, frames, widget in (("compact", self.compact_frames, self.compact.sprite),
+                                    ("full", self.full_frames, self.full.pet)):
+            previous = self.look_indices.get(key)
+            pixmap = self.pointer_pixmap(frames, widget, key)
+            if self.look_indices.get(key) != previous:
+                if key == "compact":
+                    widget.update_pixmap(pixmap)
+                else:
+                    widget.setPixmap(pixmap)
+
     def refresh_compact_sprite_only(self):
-        pixmap = self.compact_frames.get(self.anim_name, self.frame_index)
+        pixmap = self.pointer_pixmap(self.compact_frames, self.compact.sprite, "compact")
         data = self.view_data()
         self.compact.update_view(
             pixmap,
@@ -1702,8 +1740,8 @@ class CompanionController:
         )
 
     def refresh(self):
-        compact_pixmap = self.compact_frames.get(self.anim_name, self.frame_index)
-        full_pixmap = self.full_frames.get(self.anim_name, self.frame_index)
+        compact_pixmap = self.pointer_pixmap(self.compact_frames, self.compact.sprite, "compact")
+        full_pixmap = self.pointer_pixmap(self.full_frames, self.full.pet, "full")
         data = self.view_data()
         self.compact.update_view(
             compact_pixmap,
@@ -1787,6 +1825,7 @@ class CompanionController:
             custom_text = "not set"
         return f"Active: {active_text}\nFound: {found_text}\nCustom: {custom_text}"
 
+    @staticmethod
     def codex_source_name(path: Path) -> str:
         text = str(path)
         normalized = text.replace("/", "\\")
@@ -1841,8 +1880,8 @@ class CompanionController:
         self.current_pet = self.resolve_pet()
         self.trait_key = pet_trait_key(self.current_pet)
         self.ensure_activity_state()
-        self.full_frames = SpriteFrames(self.current_pet.spritesheet_path, float(self.config.get("fullScale", 1.0)))
-        self.compact_frames = SpriteFrames(self.current_pet.spritesheet_path, compact_scale_value(self.config.get("compactScale", 0.50)))
+        self.full_frames = SpriteFrames(self.current_pet.spritesheet_path, float(self.config.get("fullScale", 1.0)), self.current_pet.sprite_version)
+        self.compact_frames = SpriteFrames(self.current_pet.spritesheet_path, compact_scale_value(self.config.get("compactScale", 0.50)), self.current_pet.sprite_version)
         self.reload_pet_combo()
         self.refresh()
 
@@ -1868,8 +1907,8 @@ class CompanionController:
         if self.compact.isVisible():
             self.compact.show()
 
-        self.full_frames = SpriteFrames(self.current_pet.spritesheet_path, float(self.config.get("fullScale", 1.0)))
-        self.compact_frames = SpriteFrames(self.current_pet.spritesheet_path, compact_scale_value(self.config.get("compactScale", 0.50)))
+        self.full_frames = SpriteFrames(self.current_pet.spritesheet_path, float(self.config.get("fullScale", 1.0)), self.current_pet.sprite_version)
+        self.compact_frames = SpriteFrames(self.current_pet.spritesheet_path, compact_scale_value(self.config.get("compactScale", 0.50)), self.current_pet.sprite_version)
         self.reload_pet_combo()
         self.refresh()
 
@@ -1878,8 +1917,8 @@ class CompanionController:
         self.current_pet = self.resolve_pet()
         self.trait_key = pet_trait_key(self.current_pet)
         self.ensure_activity_state()
-        self.full_frames = SpriteFrames(self.current_pet.spritesheet_path, float(self.config.get("fullScale", 1.0)))
-        self.compact_frames = SpriteFrames(self.current_pet.spritesheet_path, compact_scale_value(self.config.get("compactScale", 0.50)))
+        self.full_frames = SpriteFrames(self.current_pet.spritesheet_path, float(self.config.get("fullScale", 1.0)), self.current_pet.sprite_version)
+        self.compact_frames = SpriteFrames(self.current_pet.spritesheet_path, compact_scale_value(self.config.get("compactScale", 0.50)), self.current_pet.sprite_version)
         self.reload_pet_combo()
         self.refresh()
 
