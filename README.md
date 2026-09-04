@@ -16,7 +16,7 @@ It notices tasks, tool calls, reviews, errors, quiet stretches, and care actions
 
 ## Download
 
-Get the latest Windows build from the [Releases](https://github.com/pixel-raccoon/codex-pet-companion/releases) page.
+Get the latest Windows build from the [Releases](https://github.com/PersephoneUsher/codex-pet-companion/releases) page.
 
 Download the release zip, extract the `Codex Pet Companion` folder, and run:
 
@@ -166,3 +166,14 @@ python -m unittest discover -s tests -v
 Tests cover strict version/geometry validation, legacy inference, import and
 discovery, preservation of existing pets on invalid imports, all sixteen angles,
 sector boundaries, all original animation rows, and activity/drag precedence.
+
+### Reproducible Windows build
+
+Use `python tools/build_windows_v2.py` after installing `requirements.txt`.
+This builds `dist/CodexPetCompanion.exe` and `dist/updater.exe` with a restricted
+build-process PATH, preventing unrelated media-tool DLLs from being collected.
+It does not change the user's system PATH. The original batch scripts remain
+available for environments that already have a clean build PATH.
+
+A startup regression fix also marks `codex_source_name` as a static method;
+previously detecting a Codex source could raise a TypeError during window setup.
