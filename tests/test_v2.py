@@ -152,6 +152,11 @@ class V2Tests(unittest.TestCase):
             c.pointer_pixmap(frames, widget, "test")
             self.assertIsNone(c.look_indices["test"])
 
+            c.compact_dragging = False
+            c.state.clear()
+            c.state.update(hunger=100, mood=100, energy=100, quota_low=True)
+            self.assertEqual(c.current_animation(), "failed")
+
             c.compact_dragging, c.compact_drag_animation = True, "running-left"
             self.assertEqual(c.current_animation(), "running-left")
             c.pointer_pixmap(frames, widget, "test")

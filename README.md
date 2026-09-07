@@ -33,6 +33,7 @@ The app includes an updater, so future versions can be installed from inside the
 - Full desktop window and compact mini mode.
 - Mini mode with short workflow notifications, similar to the official Codex pets.
 - Reactions to Codex tasks, tool calls, reviews, errors, and quiet periods.
+- Reads Codex's local account-limit snapshots and uses the failed animation when any usage window has 10% or less remaining. The state clears automatically after the allowance recovers and does not count as a task error.
 - Virtual-pet care: feed, play, rest, and click the pet in full mode.
 - Fullness, mood, energy, focus, friendship, and days-together progression.
 - Daily activities, idle discoveries, micro reactions, and high-bond moments.

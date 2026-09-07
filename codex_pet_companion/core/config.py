@@ -113,6 +113,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "bridgeLiveEventAgeSeconds": 60,
     "bridgeMaxEventAgeSeconds": 900,
     "bridgeNearbySessionSeconds": 180,
+    "quotaLowRemainingPercent": 10,
     "debugBridge": False,
     "debugBridgeMaxLines": 160,
     "selectedPetId": "lumisprout",

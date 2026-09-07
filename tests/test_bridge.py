@@ -133,6 +133,30 @@ class BridgeTests(unittest.TestCase):
         self.bridge.poll_once()
         self.assertEqual(self.events()[0]["session_file"], str(b))
 
+    def test_quota_low_and_recovery_are_emitted_only_on_transition(self):
+        path, = self.baseline("rollout-quota.jsonl")
+        low = self.record("token_count", rate_limits={
+            "primary": {"used_percent": 2, "window_minutes": 300, "resets_at": 100},
+            "secondary": {"used_percent": 93, "window_minutes": 10080, "resets_at": 200},
+        })
+        self.append(path, low)
+        self.bridge.poll_once()
+        event = self.events()[0]
+        self.assertEqual(event["action"], "quota_low")
+        self.assertEqual(event["quota_remaining_percent"], 7)
+        self.assertEqual(event["quota_window_minutes"], 10080)
+        self.append(path, low)
+        self.bridge.poll_once()
+        self.assertEqual(self.events(), [])
+
+        recovered = self.record("token_count", rate_limits={
+            "primary": {"used_percent": 5, "window_minutes": 300, "resets_at": 300},
+            "secondary": {"used_percent": 20, "window_minutes": 10080, "resets_at": 400},
+        })
+        self.append(path, recovered)
+        self.bridge.poll_once()
+        self.assertEqual(self.events()[0]["action"], "quota_ok")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1459,6 +1459,10 @@ class CompanionController:
                 self.handle_update_download_result(event)
                 continue
             action = action_map.get(action, action)
+            if action in {"quota_low", "quota_ok"}:
+                for key in ("quota_remaining_percent", "quota_window_minutes", "quota_resets_at"):
+                    if key in event:
+                        self.state[key] = event.get(key)
             self.add_bridge_debug(
                 f"queue received: {action} title={event.get('notification_title') or ''} subtitle={event.get('notification_subtitle') or ''}"
             )
@@ -1475,6 +1479,9 @@ class CompanionController:
     def current_animation(self) -> str:
         if self.compact_dragging and self.compact_drag_animation in STATES:
             return self.compact_drag_animation
+
+        if bool(self.state.get("quota_low", False)):
+            return "failed"
 
         current_time = now()
         if float(self.state.get("event_until", 0) or 0) > current_time and str(self.state.get("current_event") or "") in STATES:

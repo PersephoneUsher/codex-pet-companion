@@ -737,6 +737,12 @@ def apply_action(
         update_recovery_state(state, config)
         return
 
+    if action in {"quota_low", "quota_ok"}:
+        state["quota_low"] = action == "quota_low"
+        state["event_status"] = note or ("Codex quota is running low" if action == "quota_low" else "Codex quota recovered")
+        add_codex_log(state, state["event_status"])
+        return
+
     if action in {"error", "fail", "failed"}:
         inc_daily(state, "codex_errors")
         extra = 5 if int(state.get("mood", 50) or 50) < 25 else 0

@@ -47,6 +47,8 @@ class CodexBridge(threading.Thread):
         self.byte_activity: dict[str, float] = {}
         self.session_titles: dict[str, str] = {}
         self.observed_sizes: dict[str, int] = {}
+        self.quota_is_low: bool | None = None
+        self.quota_snapshot: dict[str, Any] = {}
 
     @classmethod
     def task_title_from_user_message(cls, value: Any, limit: int = 40) -> str:
@@ -357,7 +359,7 @@ class CodexBridge(threading.Thread):
         self.inactive_sent = False
         self.debug(f"queue event: {action} type={kind or action} title={title} subtitle={subtitle}")
         label, source_kind = self.source_label(self.active_codex_home)
-        self.event_queue.put({
+        event = {
             "action": action,
             "note": note,
             "session_file": session_file,
@@ -370,7 +372,10 @@ class CodexBridge(threading.Thread):
             "codex_active_source_kind": source_kind,
             "codex_active_codex_home": str(self.active_codex_home or ""),
             "codex_found_source_labels": self.found_source_labels(),
-        })
+        }
+        if action in {"quota_low", "quota_ok"}:
+            event.update(self.quota_snapshot)
+        self.event_queue.put(event)
 
     def notification_text(self, action: str, note: str, kind: str) -> tuple[str, str]:
         task_title = self.current_task_title.strip()
@@ -378,6 +383,10 @@ class CodexBridge(threading.Thread):
             return (task_title or "Codex reported an error", "Error")
         if action == "review_ready":
             return (task_title or "Codex is ready to review", "Ready to review")
+        if action == "quota_low":
+            return ("Codex quota is running low", note.split(";")[0])
+        if action == "quota_ok":
+            return ("Codex quota recovered", note.split(";")[0])
         if kind in {"function_call", "exec_command_end", "patch_apply"}:
             return (task_title or "Codex is running a command", "Running...")
         if task_title:
@@ -436,6 +445,9 @@ class CodexBridge(threading.Thread):
     def event_from_json(self, obj: dict[str, Any]) -> tuple[str, str, str] | None:
         payload = self.extract_payload(obj)
         ptype = str(payload.get("type") or obj.get("type") or "")
+
+        if ptype == "token_count":
+            return self.quota_event(payload.get("rate_limits"))
 
         if ptype == "user_message":
             raw_message = payload.get("message") or payload.get("text") or payload.get("text_elements")
@@ -498,6 +510,42 @@ class CodexBridge(threading.Thread):
         if "traceback" in text or '"status": "failed"' in text or '"level": "error"' in text:
             return ("error", "Codex reported an error", "error")
         return None
+
+    def quota_event(self, rate_limits: Any) -> tuple[str, str, str] | None:
+        if not isinstance(rate_limits, dict):
+            return None
+        windows: list[tuple[float, int, int | None]] = []
+        for key in ("primary", "secondary"):
+            window = rate_limits.get(key)
+            if not isinstance(window, dict):
+                continue
+            try:
+                remaining = max(0.0, min(100.0, 100.0 - float(window["used_percent"])))
+                minutes = int(window.get("window_minutes") or 0)
+                resets_at = int(window["resets_at"]) if window.get("resets_at") is not None else None
+            except (KeyError, TypeError, ValueError):
+                continue
+            windows.append((remaining, minutes, resets_at))
+        if not windows:
+            return None
+
+        remaining, minutes, resets_at = min(windows, key=lambda item: item[0])
+        self.quota_snapshot = {
+            "quota_remaining_percent": remaining,
+            "quota_window_minutes": minutes,
+            "quota_resets_at": resets_at,
+        }
+        threshold = max(0.0, min(100.0, float(self.config.get("quotaLowRemainingPercent", 10) or 10)))
+        is_low = remaining <= threshold or bool(rate_limits.get("rate_limit_reached_type"))
+        changed = self.quota_is_low is not None and is_low != self.quota_is_low
+        first_low = self.quota_is_low is None and is_low
+        self.quota_is_low = is_low
+        if not (changed or first_low):
+            return None
+
+        label = "5-hour" if minutes == 300 else "7-day" if minutes == 10080 else f"{minutes}-minute"
+        note = f"{remaining:g}% remaining in the {label} limit; resets_at={resets_at or 0}"
+        return ("quota_low" if is_low else "quota_ok", note, "quota_limit")
 
     @staticmethod
     def extract_payload(obj: dict[str, Any]) -> dict[str, Any]:
