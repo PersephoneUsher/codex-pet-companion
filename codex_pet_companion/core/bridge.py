@@ -49,6 +49,7 @@ class CodexBridge(threading.Thread):
         self.observed_sizes: dict[str, int] = {}
         self.quota_is_low: bool | None = None
         self.quota_snapshot: dict[str, Any] = {}
+        self.quota_bootstrap_done = False
 
     @classmethod
     def task_title_from_user_message(cls, value: Any, limit: int = 40) -> str:
@@ -183,6 +184,8 @@ class CodexBridge(threading.Thread):
             self.active_codex_home = None
             latest_key = ""
             self.active_session_file = ""
+
+        self.bootstrap_quota(sources)
 
         self.emit_source_snapshot(nearby_count)
 
@@ -546,6 +549,34 @@ class CodexBridge(threading.Thread):
         label = "5-hour" if minutes == 300 else "7-day" if minutes == 10080 else f"{minutes}-minute"
         note = f"{remaining:g}% remaining in the {label} limit; resets_at={resets_at or 0}"
         return ("quota_low" if is_low else "quota_ok", note, "quota_limit")
+
+    def bootstrap_quota(self, sources: list[SessionSource]) -> None:
+        """Load the newest saved limit snapshot without replaying old task events."""
+        if self.quota_bootstrap_done:
+            return
+        self.quota_bootstrap_done = True
+        for source in sorted(sources, key=lambda item: str(item.session_file), reverse=True)[:32]:
+            try:
+                size = source.session_file.stat().st_size
+                start = self.tail_start_offset(source.session_file, max(0, size - 262144))
+                with source.session_file.open("rb") as handle:
+                    handle.seek(start)
+                    lines = handle.read().decode("utf-8", errors="ignore").splitlines()
+            except OSError:
+                continue
+            for line in reversed(lines):
+                try:
+                    obj = json.loads(line)
+                except (TypeError, ValueError):
+                    continue
+                payload = self.extract_payload(obj) if isinstance(obj, dict) else {}
+                if str(payload.get("type") or "") != "token_count":
+                    continue
+                event = self.quota_event(payload.get("rate_limits"))
+                if event is not None:
+                    action, note, kind = event
+                    self.emit(action, note, str(source.session_file), kind)
+                return
 
     @staticmethod
     def extract_payload(obj: dict[str, Any]) -> dict[str, Any]:
