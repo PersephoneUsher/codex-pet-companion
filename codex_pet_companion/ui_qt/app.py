@@ -23,7 +23,7 @@ from PySide6.QtGui import QIcon
 
 from codex_pet_companion.core.bridge import CodexBridge
 from codex_pet_companion.core.config import load_config, save_config, resolve_codex_home, resolve_state_dir, ui_default_config, data_dir
-from codex_pet_companion.core.constants import ACHIEVEMENTS, APP_VERSION, APP_NAME_DISPLAY, STATES, TRAITS
+from codex_pet_companion.core.constants import ACHIEVEMENTS, APP_VERSION, APP_NAME_DISPLAY, NON_LOOPING_STATES, STATES, TRAITS
 from codex_pet_companion.core.daily_activities import ensure_activity_state as _ensure_activity_state, activity_text as _activity_text
 from codex_pet_companion.core.pet_pack import export_pet_pack, import_pet_pack
 from codex_pet_companion.core.pets import PetInfo, discover_pets, pet_trait_key
@@ -1342,6 +1342,9 @@ class CompanionController:
             self.frame_index = 0
             self.next_frame_at = t + durations[self.frame_index]
         elif t >= self.next_frame_at:
+            if self.anim_name in NON_LOOPING_STATES and self.frame_index >= len(durations) - 1:
+                self.next_frame_at = float("inf")
+                return
             self.frame_index = (self.frame_index + 1) % len(durations)
             self.next_frame_at = t + durations[self.frame_index]
 

@@ -162,6 +162,25 @@ class V2Tests(unittest.TestCase):
             c.pointer_pixmap(frames, widget, "test")
             self.assertIsNone(c.look_indices["test"])
 
+    def test_failed_animation_holds_last_frame_until_state_changes(self):
+        c = CompanionController.__new__(CompanionController)
+        c.anim_name = "failed"
+        c.frame_index = 6
+        c.next_frame_at = 1
+        with patch("codex_pet_companion.ui_qt.app.now", return_value=10):
+            c.advance_animation_frame()
+        self.assertEqual(c.frame_index, 7)
+        c.next_frame_at = 1
+        with patch("codex_pet_companion.ui_qt.app.now", return_value=10):
+            c.advance_animation_frame()
+        self.assertEqual(c.frame_index, 7)
+        self.assertEqual(c.next_frame_at, float("inf"))
+
+        c.force_animation("idle")
+        self.assertEqual((c.anim_name, c.frame_index, c.next_frame_at), ("idle", 0, 0))
+        c.force_animation("failed")
+        self.assertEqual((c.anim_name, c.frame_index, c.next_frame_at), ("failed", 0, 0))
+
     def test_full_controller_startup_with_detected_codex(self):
         pet = load_pet_from_folder(self.pet(), "test")
         from codex_pet_companion.core.config import DEFAULT_CONFIG

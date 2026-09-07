@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-APP_VERSION = "1.0.8"
+APP_VERSION = "1.0.9"
 APP_NAME_DISPLAY = "Codex Pet Companion"
 GITHUB_REPO = "PersephoneUsher/codex-pet-companion"
 CELL_W = 192
@@ -20,6 +20,9 @@ STATES = {
     "running": (7, [190, 190, 190, 190, 190, 320]),
     "review": (8, [380, 380, 380, 380, 380, 760]),
 }
+
+# Play these once, then keep showing their final frame until state changes.
+NON_LOOPING_STATES = {"failed"}
 
 EVENT_TO_ANIMATION = {
     "codex_running": "running",
