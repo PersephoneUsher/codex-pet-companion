@@ -185,6 +185,16 @@ class V2Tests(unittest.TestCase):
                 c.update_compact_drag_direction(-5)
                 self.assertEqual(c.anim_name, "running-left")
                 c.end_compact_drag()
+                errors_before = c.state["codex_counters"]["error"]
+                c.queue.put({"action": "quota_low", "note": "5% remaining", "quota_remaining_percent": 5,
+                             "quota_window_minutes": 10080, "quota_resets_at": 123})
+                c.process_queue()
+                self.assertTrue(c.state["quota_low"])
+                self.assertEqual(c.current_animation(), "failed")
+                self.assertEqual(c.state["codex_counters"]["error"], errors_before)
+                c.queue.put({"action": "quota_ok", "note": "80% remaining", "quota_remaining_percent": 80})
+                c.process_queue()
+                self.assertFalse(c.state["quota_low"])
             finally:
                 c.timer.stop()
                 c.pointer_timer.stop()
